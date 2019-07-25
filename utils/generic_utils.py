@@ -114,7 +114,7 @@ def save_checkpoint(model, optimizer, optimizer_st, model_loss, out_path,
     new_state_dict = model.state_dict()
     state = {
         'model': new_state_dict,
-        'optimizer': optimizer.state_dict(),
+        'optimizer': optimizer.state_dict() if optimizer is not None else None,
         'step': current_step,
         'epoch': epoch,
         'linear_loss': model_loss,
@@ -199,11 +199,14 @@ def count_parameters(model):
 
 # from https://gist.github.com/jihunchoi/f1434a77df9db1bb337417854b398df1
 def sequence_mask(sequence_length, max_len=None):
-    if max_len is None:
-        max_len = sequence_length.data.max()
+    # type: (Tensor, Optional[Tensor]) -> Tensor
+    if max_len is not None:
+        real_max_len = max_len
+    else:
+        real_max_len = sequence_length.max()
     batch_size = sequence_length.size(0)
-    seq_range = torch.arange(0, max_len).long()
-    seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, max_len)
+    seq_range = torch.arange(0, real_max_len).long()
+    seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, real_max_len)
     if sequence_length.is_cuda:
         seq_range_expand = seq_range_expand.cuda()
     seq_length_expand = (

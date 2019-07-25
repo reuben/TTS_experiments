@@ -6,6 +6,7 @@ import copy
 import numpy as np
 from pprint import pprint
 from scipy import signal, io
+from .istft_deconv import istft_deconv
 
 
 class AudioProcessor(object):
@@ -101,7 +102,7 @@ class AudioProcessor(object):
         if self.signal_norm:
             if self.symmetric_norm:
                 if self.clip_norm:
-                    S_denorm = np.clip(S_denorm, -self.max_norm, self.max_norm) 
+                    S_denorm = np.clip(S_denorm, -self.max_norm, self.max_norm)
                 S_denorm = ((S_denorm + self.max_norm) * -self.min_level_db / (2 * self.max_norm)) + self.min_level_db
                 return S_denorm
             else:
@@ -175,7 +176,7 @@ class AudioProcessor(object):
 
     def out_linear_to_mel(self, linear_spec):
         S = self._denormalize(linear_spec)
-        S = self._db_to_amp(S + self.ref_level_db)  
+        S = self._db_to_amp(S + self.ref_level_db)
         S = self._linear_to_mel(np.abs(S))
         S = self._amp_to_db(S) - self.ref_level_db
         mel = self._normalize(S)
@@ -191,16 +192,21 @@ class AudioProcessor(object):
         return y
 
     def _stft(self, y):
-        return librosa.stft(
-            y=y,
+        # return librosa.stft(
+        #     y=y,
+        #     n_fft=self.n_fft,
+        #     hop_length=self.hop_length,
+        #     win_length=self.win_length,
+        # )
+        return torch.stft(y,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
-            win_length=self.win_length,
-        )
+            win_length=self.win_length)
 
     def _istft(self, y):
-        return librosa.istft(
-            y, hop_length=self.hop_length, win_length=self.win_length)
+        # return librosa.istft(
+        #     y, hop_length=self.hop_length, win_length=self.win_length)
+        return istft_deconv(y, hop_length=self.hop_length, win_length=self.win_length)
 
     def find_endpoint(self, wav, threshold_db=-40, min_silence_sec=0.8):
         window_length = int(self.sample_rate * min_silence_sec)

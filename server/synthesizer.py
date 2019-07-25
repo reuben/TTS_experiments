@@ -1,10 +1,5 @@
 import io
 import os
-<<<<<<< HEAD
-
-import numpy as np
-import torch
-=======
 import sys
 
 import numpy as np
@@ -22,12 +17,7 @@ suffixes = "(Inc|Ltd|Jr|Sr|Co)"
 starters = "(Mr|Mrs|Ms|Dr|He\s|She\s|It\s|They\s|Their\s|Our\s|We\s|But\s|However\s|That\s|This\s|Wherever)"
 acronyms = "([A-Z][.][A-Z][.](?:[A-Z][.])?)"
 websites = "[.](com|net|org|io|gov)"
->>>>>>> dev-tacotron2
 
-from models.tacotron import Tacotron
-from utils.audio import AudioProcessor
-from utils.generic_utils import load_config
-from utils.text import phoneme_to_sequence, phonemes, symbols, text_to_sequence
 
 class Synthesizer(object):
     def __init__(self, config):
@@ -66,7 +56,7 @@ class Synthesizer(object):
         if use_cuda:
             self.tts_model.cuda()
         self.tts_model.eval()
-        self.tts_model.decoder.max_decoder_steps = 3000
+        # self.tts_model.decoder.max_decoder_steps = 3000
 
     def load_wavernn(self, lib_path, model_path, model_file, model_config, use_cuda):
         sys.path.append(lib_path) # set this if TTS is not installed globally
@@ -144,9 +134,18 @@ class Synthesizer(object):
             print(text_hat)
 
             chars_var = torch.from_numpy(seq).unsqueeze(0).long()
+            print(chars_var)
 
             if self.use_cuda:
                 chars_var = chars_var.cuda()
+
+            # JIT trace
+            trace_inputs = {
+                'inference': chars_var
+            }
+            self.tts_model = torch.jit.trace_module(self.tts_model, trace_inputs, True, True)
+            self.tts_model.save('/tmp/tts.pt')
+
             decoder_out, postnet_out, alignments, stop_tokens = self.tts_model.inference(
                 chars_var)
             postnet_out = postnet_out[0].data.cpu().numpy()

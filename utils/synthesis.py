@@ -6,7 +6,7 @@ import numpy as np
 from .text import text_to_sequence, phoneme_to_sequence, sequence_to_phoneme
 from .visual import visualize
 from matplotlib import pylab as plt
-
+from timeit import default_timer as timer
 
 def synthesis(model, text, CONFIG, use_cuda, ap, truncated=False, enable_eos_bos_chars=False, trim_silence=False):
     """Synthesize voice for the given text.
@@ -32,6 +32,7 @@ def synthesis(model, text, CONFIG, use_cuda, ap, truncated=False, enable_eos_bos
     else:
         seq = np.asarray(text_to_sequence(text, text_cleaner), dtype=np.int32)
     chars_var = torch.from_numpy(seq).unsqueeze(0)
+    print('final input:', chars_var)
     # synthesize voice
     if use_cuda:
         chars_var = chars_var.cuda()
@@ -39,18 +40,21 @@ def synthesis(model, text, CONFIG, use_cuda, ap, truncated=False, enable_eos_bos
         decoder_output, postnet_output, alignments, stop_tokens = model.inference_truncated(
             chars_var.long())
     else:
-        decoder_output, postnet_output, alignments, stop_tokens = model.inference(
+        start = timer()
+        wav, alignment, decoder_output, postnet_output, stop_tokens = model.inference(
             chars_var.long())
-    # convert outputs to numpy
-    postnet_output = postnet_output[0].data.cpu().numpy()
-    decoder_output = decoder_output[0].data.cpu().numpy()
-    alignment = alignments[0].cpu().data.numpy()
-    # plot results
-    if CONFIG.model == "Tacotron":
-        wav = ap.inv_spectrogram(postnet_output.T)
-    else:
-        wav = ap.inv_mel_spectrogram(postnet_output.T)
+        end = timer()
+        print('model.inference in {:.3}s.'.format(end-start))
+    # # convert outputs to numpy
+    # postnet_output = postnet_output[0].data.cpu().numpy()
+    # decoder_output = decoder_output[0].data.cpu().numpy()
+    # alignment = alignments[0].cpu().data.numpy()
+    # # plot results
+    # if CONFIG.model == "Tacotron":
+    #     wav = ap.inv_spectrogram(postnet_output.T)
+    # else:
+    #     wav = ap.inv_mel_spectrogram(postnet_output.T)
     # trim silence
-    if trim_silence:
-        wav = wav[:ap.find_endpoint(wav)]
+    # if trim_silence:
+    #     wav = wav[:ap.find_endpoint(wav)]
     return wav, alignment, decoder_output, postnet_output, stop_tokens
