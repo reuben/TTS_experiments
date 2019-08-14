@@ -2,6 +2,7 @@ from math import sqrt
 import torch
 from torch.autograd import Variable
 from torch import nn
+from torch.jit import Final
 from torch.nn import functional as F
 
 
@@ -108,9 +109,13 @@ class Attention(nn.Module):
     # Pylint gets confused by PyTorch conventions here
     #pylint: disable=attribute-defined-outside-init
 
-    __constants__ = ['windowing', 'norm', 'forward_attn',
-                     'trans_agent', 'forward_attn_mask', 'location_attention',
-                     '_mask_value']
+    windowing: Final[bool]
+    norm: Final[str]
+    forward_attn: Final[bool]
+    forward_attn_mask: Final[bool]
+    trans_agent: Final[bool]
+    location_attention: Final[bool]
+    _mask_value: Final[float]
 
     def __init__(self, attention_rnn_dim, embedding_dim, attention_dim,
                  location_attention, attention_location_n_filters,
@@ -135,19 +140,17 @@ class Attention(nn.Module):
             self.location_layer = nn.Sequential()
         self._mask_value = -float("inf")
         self.windowing = windowing
-        self.win_idx = torch.jit.Attribute(-1, int)
-        self.win_back = torch.jit.Attribute(2, int)
-        self.win_front = torch.jit.Attribute(6, int)
+        self.init_win_idx()
         self.norm = norm
         self.forward_attn = forward_attn
         self.trans_agent = trans_agent
         self.forward_attn_mask = forward_attn_mask
         self.location_attention = location_attention
 
-        self.attention_weights = torch.jit.Attribute(torch.zeros(1), torch.Tensor)
-        self.attention_weights_cum = torch.jit.Attribute(torch.zeros(1), torch.Tensor)
-        self.alpha = torch.jit.Attribute(torch.zeros(1), torch.Tensor)
-        self.u = torch.jit.Attribute(0.5 * torch.ones(1, 1), torch.Tensor)
+        self.register_buffer('attention_weights', torch.zeros(1))
+        self.register_buffer('attention_weights_cum', torch.zeros(1))
+        self.register_buffer('alpha', torch.zeros(1))
+        self.register_buffer('u', 0.5 * torch.ones(1, 1))
 
     def init_win_idx(self):
         self.win_idx = -1
@@ -179,10 +182,7 @@ class Attention(nn.Module):
             self.init_win_idx()
 
     def update_location_attention(self, alignments):
-        attention_weights_cum = self.attention_weights_cum
-        if attention_weights_cum is not None:
-            attention_weights_cum += alignments
-        self.attention_weights_cum = attention_weights_cum
+        self.attention_weights_cum += alignments
 
     def get_location_attention(self, query, processed_inputs):
         attention_cat = torch.cat((self.attention_weights.unsqueeze(1),
@@ -264,16 +264,19 @@ class Attention(nn.Module):
             alignment = torch.sigmoid(attention) / torch.sigmoid(
                 attention).sum(dim=1).unsqueeze(1)
         else:
+            # define this to some value on else branch to appease PyTorch JIT
             alignment = torch.zeros(1)
             raise RuntimeError("Unknown value for attention norm type")
         if self.location_attention:
             self.update_location_attention(alignment)
         # apply forward attention if enabled
         if self.forward_attn:
-            fw_attention_res = self.apply_forward_attention(
+            # manually assign tuple members since PyTorch JIT doesn't like the
+            # unpacking assignment version directly from the method call here
+            fw_attn_res = self.apply_forward_attention(
                 inputs, alignment, attention_hidden_state)
-            context = fw_attention_res[0]
-            self.attention_weights = fw_attention_res[1]
+            context = fw_attn_res[0]
+            self.attention_weights = fw_attn_res[1]
         else:
             context = torch.bmm(alignment.unsqueeze(1), inputs)
             context = context.squeeze(1)

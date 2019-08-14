@@ -38,7 +38,9 @@ import torch.nn.functional as F
 import os
 import scipy
 
+from torch import nn
 from torch.autograd import Variable
+from torch.jit import Final
 from librosa.util import pad_center, tiny
 
 def window_sumsquare(n_frames, hop_length=200, win_length=800, n_fft=800):
@@ -84,10 +86,13 @@ def window_sumsquare(n_frames, hop_length=200, win_length=800, n_fft=800):
     return x
 
 
-class STFT(torch.jit.ScriptModule):
+class STFT(nn.Module):
     """adapted from Prem Seetharaman's https://github.com/pseeth/pytorch-stft"""
 
-    __constants__ = ['filter_length', 'hop_length', 'win_length', 'tiny_fp32']
+    filter_length: Final[int]
+    hop_length: Final[int]
+    win_length: Final[int]
+    tiny_fp32: Final[float]
 
     def __init__(self, filter_length=800, hop_length=200, win_length=800):
         super(STFT, self).__init__()
@@ -116,14 +121,9 @@ class STFT(torch.jit.ScriptModule):
         forward_basis *= fft_window
         inverse_basis *= fft_window
 
-        if 'PYTORCH_JIT' not in os.environ or os.environ['PYTORCH_JIT'] == '1':
-            self.forward_basis = torch.jit.Attribute(forward_basis.float(), torch.Tensor)
-            self.inverse_basis = torch.jit.Attribute(inverse_basis.float(), torch.Tensor)
-        else:
-            self.register_buffer('forward_basis', forward_basis.float())
-            self.register_buffer('inverse_basis', inverse_basis.float())
+        self.register_buffer('forward_basis', forward_basis.float())
+        self.register_buffer('inverse_basis', inverse_basis.float())
 
-    @torch.jit.script_method
     def transform(self, input_data):
         num_batches = input_data.size(0)
         num_samples = input_data.size(1)
@@ -151,7 +151,6 @@ class STFT(torch.jit.ScriptModule):
 
         return magnitude, phase
 
-    @torch.jit.script_method
     def inverse(self, magnitude, phase):
         recombine_magnitude_phase = torch.cat(
             [magnitude*torch.cos(phase), magnitude*torch.sin(phase)], dim=1)
@@ -176,6 +175,7 @@ class STFT(torch.jit.ScriptModule):
 
         return inverse_transform
 
+    @torch.jit.ignore
     def forward(self, input_data):
         self.magnitude, self.phase = self.transform(input_data)
         reconstruction = self.inverse(self.magnitude, self.phase)

@@ -29,10 +29,10 @@ class Tacotron2(nn.Module):
         val = sqrt(3.0) * std  # uniform bounds for std
         self.embedding.weight.data.uniform_(-val, val)
         self.encoder = Encoder(512)
-        self.decoder = Decoder(512, self.n_mel_channels, r, attn_win,
+        self.decoder = torch.jit.script(Decoder(512, self.n_mel_channels, r, attn_win,
                                attn_norm, prenet_type, prenet_dropout,
                                forward_attn, trans_agent, forward_attn_mask,
-                               location_attn, separate_stopnet)
+                               location_attn, separate_stopnet))
         self.postnet = Postnet(self.n_mel_channels)
 
     def shape_outputs(self, mel_outputs, mel_outputs_postnet, alignments):
@@ -40,6 +40,7 @@ class Tacotron2(nn.Module):
         mel_outputs_postnet = mel_outputs_postnet.transpose(1, 2)
         return mel_outputs, mel_outputs_postnet, alignments
 
+    @torch.jit.ignore
     def forward(self, text, text_lengths, mel_specs=None):
         # compute mask for padding
         mask = sequence_mask(text_lengths).to(text.device)

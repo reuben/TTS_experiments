@@ -5,15 +5,23 @@ import os
 from scipy import signal, io
 
 from torch import nn
+from torch.jit import Final
 from .generic_utils import load_config
 from .stft import STFT
 
 
-class InvMelSpectrogram(torch.jit.ScriptModule):
-    __constants__ = ['griffin_lim_iters', 'preemphasis', 'sample_rate',
-                     'do_trim_silence', 'signal_norm', 'symmetric_norm',
-                     'clip_norm', 'max_norm', 'min_level_db', 'ref_level_db',
-                     'power']
+class InvMelSpectrogram(nn.Module):
+    griffin_lim_iters: Final[int]
+    preemphasis: Final[float]
+    sample_rate: Final[int]
+    do_trim_silence: Final[bool]
+    signal_norm: Final[bool]
+    symmetric_norm: Final[bool]
+    clip_norm: Final[bool]
+    max_norm: Final[float]
+    min_level_db: Final[float]
+    ref_level_db: Final[float]
+    power: Final[float]
 
     def __init__(self,
                  tts,
@@ -60,25 +68,21 @@ class InvMelSpectrogram(torch.jit.ScriptModule):
         self.do_trim_silence = do_trim_silence
         self.n_fft, self.hop_length, self.win_length = self._stft_parameters()
         self.stft = STFT(self.n_fft, self.hop_length, self.win_length)
-        mel_basis = self._build_mel_basis()
-        inv_mel_basis = np.linalg.pinv(mel_basis)
-        if 'PYTORCH_JIT' not in os.environ or os.environ['PYTORCH_JIT'] == '1':
-            self._mel_basis = torch.jit.Attribute(torch.from_numpy(mel_basis).float(), torch.Tensor)
-            self._inv_mel_basis = torch.jit.Attribute(torch.from_numpy(inv_mel_basis).float(), torch.Tensor)
-        else:
-            self._mel_basis = torch.from_numpy(mel_basis).float()
-            self._inv_mel_basis = torch.from_numpy(inv_mel_basis).float()
 
         members = vars(self)
         for key, value in members.items():
-            if 'basis' not in key:
-                print(" | > {}:{}".format(key, value))
+            print(" | > {}:{}".format(key, value))
+
+        # Big matrices, avoid printing in the loop above
+        mel_basis = self._build_mel_basis()
+        inv_mel_basis = np.linalg.pinv(mel_basis)
+        self.register_buffer('_mel_basis', torch.from_numpy(mel_basis).float())
+        self.register_buffer('_inv_mel_basis', torch.from_numpy(inv_mel_basis).float())
 
     def save_wav(self, wav, path):
         wav_norm = wav * (32767 / max(0.01, np.max(np.abs(wav))))
         io.wavfile.write(path, self.sample_rate, wav_norm.astype(np.int16))
 
-    @torch.jit.script_method
     def _mel_to_linear(self, mel_spec):
         dot = torch.matmul(self._inv_mel_basis, mel_spec)
         return torch.max(torch.tensor(1e-10, dtype=torch.float32), dot)
@@ -128,7 +132,6 @@ class InvMelSpectrogram(torch.jit.ScriptModule):
     #         raise RuntimeError(" !! Preemphasis is applied with factor 0.0. ")
     #     return signal.lfilter([1], [1, -self.preemphasis], x)
 
-    @torch.jit.script_method
     def inv_mel_spectrogram(self, mel_spectrogram):
         '''Converts mel spectrogram to waveform using librosa'''
         D = self._denormalize(mel_spectrogram)
@@ -138,7 +141,7 @@ class InvMelSpectrogram(torch.jit.ScriptModule):
         #     return self.apply_inv_preemphasis(self._griffin_lim(S**self.power))
         return self._griffin_lim(S.unsqueeze(0)**self.power).squeeze(0)
 
-    @torch.jit.script_method
+    @torch.jit.export
     def inference(self, text):
         decoder_output, postnet_output, alignments, stop_tokens = self.tts.inference(text)
         postnet_output = postnet_output[0].t()
@@ -152,7 +155,14 @@ class InvMelSpectrogram(torch.jit.ScriptModule):
         wav_norm = wav_norm.to(torch.int16)
         return wav_norm, alignment, decoder_output, postnet_output, stop_tokens
 
-    @torch.jit.script_method
+    # We need to define a dummy forward in this module since it's the top-most
+    # module when we call torch.jit.script and that API complains if the module
+    # does not have a forward method at all, even if it is @ignore'd
+    # https://github.com/pytorch/pytorch/issues/24314
+    @torch.jit.ignore
+    def forward(self, x):
+        return x
+
     def _griffin_lim(self, S):
         # original numpy:
         # angles = np.angle(np.exp(2j * np.pi * np.random.rand(*S.size())))
@@ -179,7 +189,6 @@ class InvMelSpectrogram(torch.jit.ScriptModule):
             signal = self.stft.inverse(S, angles).squeeze(1)
         return signal
 
-    @torch.jit.script_method
     def find_endpoint(self, wav, threshold_db=-40, min_silence_sec=0.8):
         # type: (Tensor, int, float) -> int
         window_length = int(self.sample_rate * min_silence_sec)
